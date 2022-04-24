@@ -1,0 +1,12 @@
+
+
+Connection from: 127.0.0.1
+$ ls
+pw.txt
+$ exit
+
+
+Connection from: 127.0.0.1
+
+
+Connection from: 127.0.0.1

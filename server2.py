@@ -21,9 +21,9 @@ class Server(paramiko.ServerInterface):
         self.event = threading.Event()
 
     def check_channel_request(self, kind, chanid):
-        print('Check Channel Request:',kind,chanid)
         if kind == 'session':
             return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_auth_publickey(self, username, key):
         print('Check Auth Public Key:',username,key)

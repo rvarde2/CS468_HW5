@@ -9,7 +9,7 @@ import os
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 LOG = open("log.txt", "a")
-HOST_KEY = paramiko.RSAKey(filename='/home/rohan/.ssh/cs468')
+HOST_KEY = paramiko.RSAKey(filename='/home/rohan/.ssh/468')
 #HOST_KEY = paramiko.RSAKey(filename=os.path.join(__location__, 'id_rsa.new'))
 PORT = 2200
 
@@ -76,6 +76,7 @@ class FakeSshServer(paramiko.ServerInterface):
 
     def check_auth_password(self, username, password):
         # Accept all passwords as valid by default
+        print('check_auth_password', username,password)
         return paramiko.AUTH_SUCCESSFUL
 
     def get_allowed_auths(self, username):
