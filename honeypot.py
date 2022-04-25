@@ -104,12 +104,12 @@ tFQds93fprxUc0YPsiqdItVxlVIJk1Fxj8tbYfLuOE6smR05lr1BKi5xcmhm
 '''
 
 USERS = {}
-ATTEPTS_BEFORE_SUCCESS = 5
+ATTEPTS_BEFORE_SUCCESS = 3
 
 class Server(paramiko.ServerInterface):
 	def __init__(self):
 		self.event = threading.Event()
-
+		self.username = 'guest'
 	def check_channel_request(self, kind, chanid):
 		if kind == 'session':
 			return paramiko.OPEN_SUCCEEDED
@@ -120,7 +120,7 @@ class Server(paramiko.ServerInterface):
 		return True
 
 	def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
-		return True
+		return False
 
 	def get_allowed_auths(self, username):
 		# There are three possible returns corresponding to authentication method for user
@@ -134,12 +134,13 @@ class Server(paramiko.ServerInterface):
 		global ATTEPTS_BEFORE_SUCCESS
 		if(username in USERS):
 			USERS[username] = USERS[username] + 1
-			print(username,' attempt no. ',USERS[username])
+			#print(username,' attempt no. ',USERS[username])
 			if(USERS[username] >= ATTEPTS_BEFORE_SUCCESS):
+				self.username = username
 				return paramiko.AUTH_SUCCESSFUL
 		else:	
 			USERS[username] = 1
-			print(username,' attempt no. ',USERS[username])
+			#print(username,' attempt no. ',USERS[username])
 			return paramiko.AUTH_FAILED
 
 	# Authentication by Key
@@ -155,6 +156,114 @@ class Server(paramiko.ServerInterface):
 		print ('Command:',command)
 		self.event.set()
 		return True
+
+	def get_username(self):
+		return self.username
+
+def send_to_client(message,chan):
+	try:
+		chan.send(message)
+		return True
+	except OSError:
+		print('Client Disconnected')
+	return False
+
+def check_file_name(filename):
+	filename = filename.strip()
+	if(len(filename)>4):
+		if(filename[-4:]=='.txt'):
+			return True
+	return False
+
+def handle_client(chan,username,client):
+	filesystem = {}
+	command_history = []
+	output = 'Default Output'
+	status=send_to_client("\r\nWelcome to Ubuntu 20.04.3 LTS (GNU/Linux 5.4.0-90-generic x86_64)\r\n\r\n",chan)
+	run = True
+	while (run and status):
+		status=send_to_client("\033[92m{}\033[00m".format(username+"@honeypot:/$ "),chan)
+		try:
+			command = chan.recv(1024).decode("utf-8")
+		except OSError:
+			print('Client Disconnected')
+			status = False
+			return
+		command = command.rstrip()
+		command_history.append(command)
+		if (command == "exit"):
+			run = False
+			break
+		command_array_original = command.split(' ')
+		command_array = []
+		for arg in command_array_original:
+			arg = arg.strip()
+			if(len(arg)>0):
+				command_array.append(arg)
+		if(command_array[0] == 'ls'):
+			if(len(filesystem)>0):
+				for key in filesystem.keys():
+					status = send_to_client(key+"\t",chan)		
+				status = send_to_client("\r\n",chan)
+		elif(command_array[0] == 'echo'):
+			dir_index = command.find('>')
+			quotes_index = command.find('"') 
+			if(quotes_index<0):
+				if(dir_index < 0):
+					status = send_to_client(command[5:]+"\r\n",chan)
+				else:
+					filename = command[dir_index+1:]
+					filename = filename.strip()
+					if(not check_file_name(filename)):
+						status = send_to_client("Unknown file extension\r\n",chan)
+						continue
+					content = command[5:dir_index]
+					filesystem[filename]=content.strip()
+			else:
+				end_quote_index = command[quotes_index+1:].find('"')
+				end_quote_index = end_quote_index + quotes_index + 1
+				content = command[quotes_index+1:end_quote_index]
+				if(dir_index < 0):
+					status = send_to_client(content+"\r\n",chan)
+				else:
+					filename = command[dir_index+1:]
+					filename = filename.strip()
+					if(not check_file_name(filename)):
+						status = send_to_client("Unknown file extension\r\n",chan)
+						continue
+					filesystem[filename]=content.strip()
+
+		elif(command_array[0] == 'cat'):
+			if(len(command_array)!=2):
+				status = send_to_client("cat with unexpected arguments\r\n",chan)
+				continue
+			filename = command_array[1]
+			if(not check_file_name(filename)):
+				status = send_to_client("Unknown file extension\r\n",chan)
+				continue
+			if(filename not in filesystem):
+				status = send_to_client("File "+filename+" not found\r\n",chan)
+				continue
+			status = send_to_client(filesystem[filename]+"\r\n",chan)
+		elif(command_array[0] == 'cp'):
+			if(len(command_array)!=3):
+				status = send_to_client("cp with unexpected arguments\r\n",chan)
+				continue
+			if(command_array[1] not in filesystem):
+				status = send_to_client("File "+filename+" not found\r\n",chan)
+				continue
+			if(not check_file_name(command_array[2])):
+				status = send_to_client("Unknown file extension\r\n",chan)
+				continue
+			filesystem[command_array[2]] = filesystem[command_array[1]]
+		else:
+			status = send_to_client(command+": command not found"+"\r\n",chan)
+		if(status == False):# Connection already terminated
+			return
+
+	send_to_client('logout\r\n',chan)
+	send_to_client('Connection closed\r\n',chan)
+	client.close()
 
 def main(argv):
 	port = 2222
@@ -190,7 +299,7 @@ def main(argv):
 		try:
 			# Accept TCP Connection from Client
 			client, addr = sock.accept()
-			print('Connection from request from ',addr[0])
+			print('Connection request from ',addr[0])
 			transport = paramiko.Transport(client)
 			transport.add_server_key(key)
 			transport.local_version = "SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3"
@@ -207,6 +316,7 @@ def main(argv):
 
 		# Authenticate Client
 		chan = transport.accept(20)
+
 		if chan is None:
 			# Too many incorrect password attempts
 			print("Failed to acquire the Channel")
@@ -217,8 +327,8 @@ def main(argv):
 		if not server.event.is_set():
 			raise Exception("Shell not request")
 
-		chan.send("Welcome to Jumanji!!!\r\n\r\n")
-
+		username = server.get_username()
+		threading.Thread(target=handle_client, args=(chan,username,client)).start()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
